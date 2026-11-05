@@ -1,0 +1,247 @@
+{
+  "name": "AI Invoice Extractor (Drive → Gemini → Sheets)",
+  "flow": [
+    {
+      "id": 1,
+      "module": "google-drive:watchFilesInAFolder",
+      "version": 1,
+      "parameters": {
+        "__IMTCONN__": 0,
+        "watch": "new",
+        "limit": 5
+      },
+      "filter": null,
+      "mapper": {
+        "folderId": "/Invoices-Make"
+      },
+      "metadata": {
+        "designer": {
+          "x": 0,
+          "y": 0,
+          "name": "Watch Invoices Folder"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "module": "google-drive:downloadAFile",
+      "version": 1,
+      "parameters": {
+        "__IMTCONN__": 0
+      },
+      "filter": {
+        "name": "PDFs only",
+        "conditions": [
+          [
+            {
+              "a": "{{1.mimeType}}",
+              "o": "text:equals",
+              "b": "application/pdf"
+            }
+          ]
+        ]
+      },
+      "mapper": {
+        "fileId": "{{1.id}}"
+      },
+      "metadata": {
+        "designer": {
+          "x": 260,
+          "y": 0,
+          "name": "Download Invoice PDF"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "module": "google-gemini-ai:extractStructuredData",
+      "version": 1,
+      "parameters": {
+        "__IMTCONN__": 0,
+        "model": "gemini-1.5-flash",
+        "temperature": 0
+      },
+      "filter": null,
+      "mapper": {
+        "file": "{{2.data}}",
+        "systemInstruction": "You are an accounts-payable assistant that reads invoices and receipts, mostly from Indian businesses.\nExtract the requested fields from the document.\n\nRules:\n- Only use values that appear in the document. Never guess. If a field is not present, return null.\n- Dates: Indian documents usually write dates as DD/MM/YYYY or DD-MM-YYYY. Convert every date to YYYY-MM-DD. Example: 03/11/2026 becomes 2026-11-03 (3 November, not 11 March).\n- Amounts: return plain numbers with no currency symbols, words or commas. Indian digit grouping like 1,47,500.00 becomes 147500.\n- subtotal is the taxable value before tax.\n- tax_amount is the total tax: CGST + SGST added together, or IGST, plus any cess.\n- total_amount is the final amount payable, including tax.\n- vendor_name is the business that issued the invoice (the seller), never the customer in 'Bill To'.\n- vendor_gstin is the seller's 15-character GSTIN, never the buyer's.\n- currency is a 3-letter code such as INR or USD. Use INR when amounts are shown with ₹, Rs. or INR.\n- category must be exactly one of: Software & Cloud, Hardware & Equipment, Office & Furniture, Travel, Food & Meals, Utilities, Professional Services, Other.\n- If the text is unreadable or empty, return null for every field and Other for category.",
+        "schema": {
+          "vendor_name": {
+            "type": "string",
+            "description": "Business that issued the invoice (the seller)"
+          },
+          "vendor_gstin": {
+            "type": "string",
+            "description": "Seller's 15-character GSTIN, if shown"
+          },
+          "invoice_number": {
+            "type": "string",
+            "description": "Invoice or bill number"
+          },
+          "invoice_date": {
+            "type": "string",
+            "description": "Invoice date as YYYY-MM-DD"
+          },
+          "due_date": {
+            "type": "string",
+            "description": "Payment due date as YYYY-MM-DD, if shown"
+          },
+          "currency": {
+            "type": "string",
+            "description": "3-letter currency code, e.g. INR"
+          },
+          "subtotal": {
+            "type": "number",
+            "description": "Taxable amount before tax"
+          },
+          "tax_amount": {
+            "type": "number",
+            "description": "Total tax (CGST + SGST, or IGST, plus cess)"
+          },
+          "total_amount": {
+            "type": "number",
+            "description": "Final amount payable including tax"
+          },
+          "category": {
+            "type": "string",
+            "description": "Expense category (Software & Cloud, Hardware & Equipment, Office & Furniture, Travel, Food & Meals, Utilities, Professional Services, Other)"
+          }
+        }
+      },
+      "metadata": {
+        "designer": {
+          "x": 520,
+          "y": 0,
+          "name": "Gemini Extract Structured Data"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "module": "builtin:router",
+      "version": 1,
+      "parameters": {},
+      "filter": null,
+      "mapper": {},
+      "metadata": {
+        "designer": {
+          "x": 780,
+          "y": 0,
+          "name": "Validation Router"
+        }
+      },
+      "routes": [
+        {
+          "flow": [
+            {
+              "id": 5,
+              "module": "google-sheets:addRow",
+              "version": 1,
+              "parameters": {
+                "__IMTCONN__": 0,
+                "spreadsheetId": "Invoice Log",
+                "sheet": "make_log",
+                "tableContainsHeaders": true
+              },
+              "filter": {
+                "name": "Valid & Verified",
+                "conditions": [
+                  [
+                    {
+                      "a": "{{3.vendor_name}}",
+                      "o": "exists"
+                    },
+                    {
+                      "a": "{{3.invoice_number}}",
+                      "o": "exists"
+                    },
+                    {
+                      "a": "{{3.invoice_date}}",
+                      "o": "exists"
+                    },
+                    {
+                      "a": "{{3.total_amount}}",
+                      "o": "exists"
+                    },
+                    {
+                      "a": "{{round(3.subtotal + 3.tax_amount)}}",
+                      "o": "number:equals",
+                      "b": "{{round(3.total_amount)}}"
+                    }
+                  ]
+                ]
+              },
+              "mapper": {
+                "Processed At": "{{formatDate(now; 'YYYY-MM-DD HH:mm'; 'Asia/Kolkata')}}",
+                "File Name": "{{1.name}}",
+                "File Link": "{{1.webViewLink}}",
+                "Vendor": "{{3.vendor_name}}",
+                "GSTIN": "{{3.vendor_gstin}}",
+                "Invoice No": "{{3.invoice_number}}",
+                "Invoice Date": "{{3.invoice_date}}",
+                "Due Date": "{{3.due_date}}",
+                "Currency": "{{ifempty(3.currency; 'INR')}}",
+                "Subtotal": "{{3.subtotal}}",
+                "Tax": "{{3.tax_amount}}",
+                "Total": "{{3.total_amount}}",
+                "Category": "{{ifempty(3.category; 'Other')}}",
+                "Status": "OK",
+                "Review Notes": ""
+              },
+              "metadata": {
+                "designer": {
+                  "x": 1040,
+                  "y": -120,
+                  "name": "Log Valid Row (OK)"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "flow": [
+            {
+              "id": 6,
+              "module": "google-sheets:addRow",
+              "version": 1,
+              "parameters": {
+                "__IMTCONN__": 0,
+                "spreadsheetId": "Invoice Log",
+                "sheet": "make_log",
+                "tableContainsHeaders": true
+              },
+              "filter": {
+                "name": "Needs review (Fallback)",
+                "conditions": []
+              },
+              "mapper": {
+                "Processed At": "{{formatDate(now; 'YYYY-MM-DD HH:mm'; 'Asia/Kolkata')}}",
+                "File Name": "{{1.name}}",
+                "File Link": "{{1.webViewLink}}",
+                "Vendor": "{{3.vendor_name}}",
+                "GSTIN": "{{3.vendor_gstin}}",
+                "Invoice No": "{{3.invoice_number}}",
+                "Invoice Date": "{{3.invoice_date}}",
+                "Due Date": "{{3.due_date}}",
+                "Currency": "{{ifempty(3.currency; 'INR')}}",
+                "Subtotal": "{{3.subtotal}}",
+                "Tax": "{{3.tax_amount}}",
+                "Total": "{{3.total_amount}}",
+                "Category": "{{ifempty(3.category; 'Other')}}",
+                "Status": "Needs review",
+                "Review Notes": "Missing required field (vendor, invoice no, date, total) or subtotal + tax != total"
+              },
+              "metadata": {
+                "designer": {
+                  "x": 1040,
+                  "y": 120,
+                  "name": "Log Needs Review Row"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

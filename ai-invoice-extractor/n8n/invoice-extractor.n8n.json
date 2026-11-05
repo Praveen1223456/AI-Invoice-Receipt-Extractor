@@ -1,0 +1,329 @@
+{
+  "name": "AI Invoice Extractor (Drive → Gemini → Sheets)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🧾 AI Invoice Extractor (n8n version)\n\nDrop an invoice or receipt PDF into a Google Drive folder. Within about a minute it is read by Gemini, checked, and logged as a row in Google Sheets.\n\n**Flow:** Drive trigger → keep PDFs only → download → pull text out of the PDF → AI extracts 10 fields → JavaScript validation → append row.\n\nRows that fail a check get **Status = Needs review** with the reason in **Review Notes**.\n\nFull setup steps: see README.md in the GitHub repo.",
+        "height": 300,
+        "width": 460,
+        "color": 4
+      },
+      "id": "4e7c7576-cf80-4f84-baa2-72516ec926f3",
+      "name": "Sticky Note - Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### ⚙️ Setup checklist\n1. **Watch Invoices Folder**: pick your Google Drive credential and the `Invoices-n8n` folder.\n2. **Download Invoice**: same Google Drive credential.\n3. **Gemini Chat Model**: add a Google Gemini API key credential (from Google AI Studio). Pick any current Flash model from the list.\n4. **Append to Invoice Log**: Google Sheets credential, then select your sheet and the `n8n_log` tab.\n5. Click **Test workflow**, upload a sample PDF to the folder, then **Activate**.",
+        "height": 300,
+        "width": 480,
+        "color": 3
+      },
+      "id": "4eca89e5-b867-446d-a0dd-454986c8684e",
+      "name": "Sticky Note - Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        420,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 🤖 Why two AI nodes?\n**Information Extractor** holds the instructions and the JSON Schema (10 fields, nullable). **Gemini Chat Model** is the brain plugged into it.\n\nTo use OpenAI or another provider instead, delete the Gemini node and connect a different Chat Model. Nothing else changes.\n\nIncludes automatic 3x retries and graceful fallback on API rate limits.",
+        "height": 240,
+        "width": 300,
+        "color": 5
+      },
+      "id": "27e18576-f227-49d9-899d-788697721dbe",
+      "name": "Sticky Note - AI",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        920,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### ✅ Validation (plain JavaScript)\nFlags a row for review when:\n- the PDF had no readable text (scanned image)\n- vendor, invoice no, date or total is missing\n- a date isn't valid calendar YYYY-MM-DD\n- subtotal + tax ≠ total (rounding tolerance ±1.0)\n- GSTIN format is wrong (regex verified)\n- duplicate invoice detected (same vendor & invoice no)\n- AI response was malformed or API failed\n\nNever trust AI output blindly in finance work.",
+        "height": 300,
+        "width": 320,
+        "color": 6
+      },
+      "id": "105138ef-f668-45bb-8d60-7e91e85208f5",
+      "name": "Sticky Note - Validation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "fc1a82aa-a3de-4112-af9c-ff5c9e83e425",
+      "name": "Watch Invoices Folder",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "895a5332-b60c-47e5-b097-d32163896afc",
+              "leftValue": "={{ $json.mimeType }}",
+              "rightValue": "application/pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "67eee0e2-4a10-4b63-98b4-ed788f2684d4",
+      "name": "Only PDFs",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        220,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "67827ce6-70b0-4302-b138-71cca8cb72e5",
+      "name": "Download Invoice",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        440,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "5a4d3623-198a-452d-9408-3b8615ad417e",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        660,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "text": "={{ ($json.text ?? '').trim().length > 20 ? $json.text : 'NO_TEXT_FOUND' }}",
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"vendor_name\": {\n      \"type\": [\n        \"string\",\n        \"null\"\n      ],\n      \"description\": \"Business that issued the invoice (the seller)\"\n    },\n    \"vendor_gstin\": {\n      \"type\": [\n        \"string\",\n        \"null\"\n      ],\n      \"description\": \"Seller's 15-character GSTIN, if shown\"\n    },\n    \"invoice_number\": {\n      \"type\": [\n        \"string\",\n        \"null\"\n      ],\n      \"description\": \"Invoice or bill number\"\n    },\n    \"invoice_date\": {\n      \"type\": [\n        \"string\",\n        \"null\"\n      ],\n      \"description\": \"Invoice date as YYYY-MM-DD\"\n    },\n    \"due_date\": {\n      \"type\": [\n        \"string\",\n        \"null\"\n      ],\n      \"description\": \"Payment due date as YYYY-MM-DD, if shown\"\n    },\n    \"currency\": {\n      \"type\": [\n        \"string\",\n        \"null\"\n      ],\n      \"description\": \"3-letter currency code, e.g. INR\"\n    },\n    \"subtotal\": {\n      \"type\": [\n        \"number\",\n        \"null\"\n      ],\n      \"description\": \"Taxable amount before tax\"\n    },\n    \"tax_amount\": {\n      \"type\": [\n        \"number\",\n        \"null\"\n      ],\n      \"description\": \"Total tax: CGST + SGST, or IGST, plus cess\"\n    },\n    \"total_amount\": {\n      \"type\": [\n        \"number\",\n        \"null\"\n      ],\n      \"description\": \"Final amount payable including tax\"\n    },\n    \"category\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"Software & Cloud\",\n        \"Hardware & Equipment\",\n        \"Office & Furniture\",\n        \"Travel\",\n        \"Food & Meals\",\n        \"Utilities\",\n        \"Professional Services\",\n        \"Other\"\n      ],\n      \"description\": \"Expense category\"\n    }\n  },\n  \"required\": [\n    \"vendor_name\",\n    \"vendor_gstin\",\n    \"invoice_number\",\n    \"invoice_date\",\n    \"due_date\",\n    \"currency\",\n    \"subtotal\",\n    \"tax_amount\",\n    \"total_amount\",\n    \"category\"\n  ]\n}",
+        "options": {
+          "systemPromptTemplate": "You are an accounts-payable assistant that reads invoices and receipts, mostly from Indian businesses.\nExtract the requested fields from the document.\n\nRules:\n- Only use values that appear in the document. Never guess. If a field is not present, return null.\n- Dates: Indian documents usually write dates as DD/MM/YYYY or DD-MM-YYYY. Convert every date to YYYY-MM-DD. Example: 03/11/2026 becomes 2026-11-03 (3 November, not 11 March).\n- Amounts: return plain numbers with no currency symbols, words or commas. Indian digit grouping like 1,47,500.00 becomes 147500.\n- subtotal is the taxable value before tax.\n- tax_amount is the total tax: CGST + SGST added together, or IGST, plus any cess.\n- total_amount is the final amount payable, including tax.\n- vendor_name is the business that issued the invoice (the seller), never the customer in \"Bill To\".\n- vendor_gstin is the seller's 15-character GSTIN, never the buyer's.\n- currency is a 3-letter code such as INR or USD. Use INR when amounts are shown with ₹, Rs. or INR.\n- category must be exactly one of: Software & Cloud, Hardware & Equipment, Office & Furniture, Travel, Food & Meals, Utilities, Professional Services, Other.\n- If the text is NO_TEXT_FOUND, return null for every field and Other for category."
+        }
+      },
+      "id": "1624a855-f799-4b7d-9604-4bf8f028658e",
+      "name": "Extract Invoice Fields (AI)",
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1,
+      "position": [
+        900,
+        120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-1.5-flash",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "1dedbd2e-60a4-4839-80d6-5b0eb8683e45",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        940,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Runs once per invoice. Turns AI output into one clean spreadsheet row,\n// enforces finance-grade validation, and decides if human review is needed.\nlet ai = $json.output ?? {};\nconst file = $('Watch Invoices Folder').item?.json ?? {};\nconst pdfText = $('Extract PDF Text').item?.json?.text ?? '';\n\nconst issues = [];\n\n// 1. Upstream AI API failure handling (e.g. rate limit, network timeout)\nif ($json.error) {\n  const errorMsg = typeof $json.error === 'object'\n    ? ($json.error.message || JSON.stringify($json.error))\n    : String($json.error);\n  issues.push(`AI API failure: ${errorMsg}`);\n}\n\n// 2. Defensive parsing for malformed AI response (string or markdown codeblock)\nif (typeof ai === 'string') {\n  try {\n    const cleaned = ai.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();\n    ai = JSON.parse(cleaned);\n  } catch (e) {\n    issues.push('Malformed AI output: could not parse JSON');\n    ai = {};\n  }\n}\n\n// 3. Scanned PDFs have no text layer, so the AI had nothing to read\nif (typeof pdfText === 'string' && pdfText.trim().length <= 20) {\n  issues.push('No readable text in PDF (scanned image?)');\n}\n\n// 4. Fields every invoice must have\nfor (const field of ['vendor_name', 'invoice_number', 'invoice_date', 'total_amount']) {\n  if (ai[field] === null || ai[field] === undefined || String(ai[field]).trim() === '') {\n    issues.push(`Missing ${field}`);\n  }\n}\n\n// 5. Strict calendar date validation (YYYY-MM-DD)\nconst isValidDate = (d) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(d ?? '')) return false;\n  const parts = d.split('-').map(Number);\n  const dt = new Date(parts[0], parts[1] - 1, parts[2]);\n  return dt.getFullYear() === parts[0] && dt.getMonth() === parts[1] - 1 && dt.getDate() === parts[2];\n};\nif (ai.invoice_date && !isValidDate(ai.invoice_date)) issues.push('Invoice date is not valid YYYY-MM-DD');\nif (ai.due_date && !isValidDate(ai.due_date)) issues.push('Due date is not valid YYYY-MM-DD');\n\n// 6. Maths check: subtotal + tax should equal total (allow Rs. 1 for rounding)\nconst toNumber = (v) =>\n  v === null || v === undefined || v === '' ? null : Number(String(v).replace(/,/g, ''));\nconst subtotal = toNumber(ai.subtotal);\nconst tax = toNumber(ai.tax_amount);\nconst total = toNumber(ai.total_amount);\nif (subtotal !== null && tax !== null && total !== null && Math.abs(subtotal + tax - total) > 1.0) {\n  issues.push(`Subtotal + tax = ${(subtotal + tax).toFixed(2)} but total = ${total.toFixed(2)}`);\n}\n\n// 7. GSTIN format: 2-digit state code + 10-character PAN + entity number + Z + check character\nconst gstin = (ai.vendor_gstin ?? '').toUpperCase().replace(/\\s/g, '');\nif (gstin && !/^\\d{2}[A-Z]{5}\\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(gstin)) {\n  issues.push('GSTIN format looks wrong');\n}\n\n// 8. Duplicate invoice check using n8n workflow static data\ntry {\n  const staticData = $getWorkflowStaticData('global');\n  staticData.processedInvoices = staticData.processedInvoices || [];\n  const invoiceKey = `${(ai.vendor_name || '').trim().toLowerCase()}_${(ai.invoice_number || '').trim().toLowerCase()}`;\n  if (ai.invoice_number && staticData.processedInvoices.includes(invoiceKey)) {\n    issues.push('Duplicate invoice detected: already processed previously');\n  } else if (ai.invoice_number && issues.length === 0) {\n    staticData.processedInvoices.push(invoiceKey);\n    if (staticData.processedInvoices.length > 500) staticData.processedInvoices.shift();\n  }\n} catch (e) {\n  // Static data not available in manual single-node test runs\n}\n\n// Column names here become the Google Sheet headers (Auto-Map in the next node)\nreturn {\n  json: {\n    'Processed At': $now.setZone('Asia/Kolkata').toFormat('yyyy-MM-dd HH:mm'),\n    'File Name': file.name ?? '',\n    'File Link': file.webViewLink ?? (file.id ? `https://drive.google.com/file/d/${file.id}/view` : ''),\n    'Vendor': ai.vendor_name ?? '',\n    'GSTIN': gstin,\n    'Invoice No': ai.invoice_number ?? '',\n    'Invoice Date': ai.invoice_date ?? '',\n    'Due Date': ai.due_date ?? '',\n    'Currency': ai.currency ?? 'INR',\n    'Subtotal': subtotal ?? '',\n    'Tax': tax ?? '',\n    'Total': total ?? '',\n    'Category': ai.category ?? 'Other',\n    'Status': issues.length ? 'Needs review' : 'OK',\n    'Review Notes': issues.join('; '),\n  },\n};\n"
+      },
+      "id": "6f7c1cb7-4302-432c-aee9-4fde6cab1867",
+      "name": "Validate & Format Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "2d56e54b-235c-490f-ace2-6f46ce2266cb",
+      "name": "Append to Invoice Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1480,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Watch Invoices Folder": {
+      "main": [
+        [
+          {
+            "node": "Only PDFs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only PDFs": {
+      "main": [
+        [
+          {
+            "node": "Download Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Invoice": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "Extract Invoice Fields (AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Invoice Fields (AI)": {
+      "main": [
+        [
+          {
+            "node": "Validate & Format Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Format Row": {
+      "main": [
+        [
+          {
+            "node": "Append to Invoice Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Invoice Fields (AI)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}
